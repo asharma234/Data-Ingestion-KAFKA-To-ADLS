@@ -1,0 +1,816 @@
+package com.xxx.edh.utils
+
+import org.apache.spark.sql.functions.udf
+import java.util.{Calendar, UUID}
+import scala.reflect.ClassTag
+import java.util.concurrent.TimeUnit
+import java.time.{LocalDate, LocalDateTime}
+import java.time.format.DateTimeFormatter
+import scala.util.Try
+import org.apache.spark.sql.expressions.UserDefinedFunction
+import java.text.SimpleDateFormat
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.Column
+import scala.util.control.Breaks._
+
+object UDFsxxxIngestion {
+
+  def generate_xxx_timestamp_udf = udf(generate_xxx_timestamp _)
+
+  def validate_string_udf = udf(validate_string _)
+
+  def validate_map_maps_udf = udf(validate_map_maps _)
+
+  def derive_address_udf = udf(derive_address _)
+
+  def derive_preference_udf = udf(derive_preference _)
+
+  def derive_profile_contact_udf = udf(derive_profile_contact_details _)
+
+  def derive_minor_details_udf = udf(derive_minor_details _)
+
+  def derive_guardian_details_udf = udf(derive_guardian_details _)
+
+  def derive_linked_member_details_udf = udf(derive_linked_member_details _)
+
+  def derive_xxx_source_records_udf = udf(derive_xxx_source_records _)
+
+  def derive_action_id_udf = udf(derive_action_id _)
+
+  def derive_source_info_udf = udf(derive_source_info _)
+
+  def update_string_udf = udf(update_string(_: Option[String], _: Option[String]))
+
+  def concatenate_xxx_source_records_udf = udf(concatenate_xxx_source_records _)
+
+  def concatenate_elements_to_seq_map_udf = udf(concatenate_elements_to_seq_map(_: Option[Seq[Map[String, String]]], _: Option[Seq[Map[String, String]]]))
+
+  def delete_elements_from_seq_map_udf = udf(delete_elements_from_seq_map _)
+
+  def adding_ts_to_maps_udf = udf(adding_ts_to_maps _)
+
+  def parse_tselement_udf = udf(parse_tselement _)
+
+  def merging_seqmaps_udf = udf(merging_seqmaps _)
+
+  val merging_seqseqmaps_udf: UserDefinedFunction = udf(merging_seqseqmaps)
+
+  def update_xxx_source_records_udf = udf(update_xxx_source_records _)
+
+  def update_source_info_udf = udf(update_source_info _)
+
+
+  def merging_2mapmaps_udf = udf(merging_2mapmaps _)
+
+  def merging_seqmapmaps_udf = udf(merging_seqmapmaps _)
+
+  def concat_strings_udf = udf(concat_strings _)
+
+  val tsConversionToLongUdf = udf((ts: java.sql.Timestamp) => ts.getTime)
+
+
+  def applyTransformations(df: DataFrame, transformations: Map[String, Column]): DataFrame = {
+    // Apply all transformations dynamically
+    transformations.foldLeft(df) { case (currentDF, (columnName, columnTransformation)) =>
+      currentDF.withColumn(columnName, columnTransformation)
+    }
+  }
+  def concat_strings(str1: String, str2: String): String = {
+    str1 + "," + str2
+  }
+
+
+
+  // New methods
+  def merging_2mapmaps(existing: Map[String, Map[String, String]], incremental: Map[String, Map[String, String]]): Map[String, Map[String, String]] = {
+
+    (incremental: Map[String, Map[String, String]], existing: Map[String, Map[String, String]]) match {
+      case (i, e) if isEmpty(i) & isEmpty(e) => null
+      case (i, e) if isEmpty(e) => i
+      case (i, e) if isEmpty(i) => e
+      case (i: Map[String, Map[String, String]], e: Map[String, Map[String, String]]) => {
+        (i.keySet ++ e.keySet).foldLeft(Map[String, Map[String, String]]()) { case (s, k) =>
+          val mp_e = e.getOrElse(k, null)
+          val mp_i = i.getOrElse(k, null)
+          val mp_mrg = (mp_e: Map[String, String], mp_i: Map[String, String]) match {
+            case (null, mp_i) => mp_i // if not in existing, then incremental
+            case (mp_e, null) => mp_e // if not in incremental, then existing
+            case (mp_ex, mp_in) => {
+              //              try {
+              var in_last_updated_timestamp = mp_in.getOrElse("last_updated_timestamp", null)
+              var ex_last_updated_timestamp = mp_ex.getOrElse("last_updated_timestamp", null)
+              /* if (in_last_updated_timestamp == null) {
+                 in_last_updated_timestamp = mp_in.getOrElse("LAST_UPDATED_TIMESTAMP", null)
+               }
+               if (ex_last_updated_timestamp == null) {
+                 ex_last_updated_timestamp = mp_ex.getOrElse("LAST_UPDATED_TIMESTAMP", null)
+               }*/
+              if (ex_last_updated_timestamp == null) {
+                ex_last_updated_timestamp = "1985-01-01 01:01:01.001"
+              }
+
+              //                if (mp_in("last_updated_timestamp".toUpperCase) > mp_ex("last_updated_timestamp".toUpperCase))
+              if (in_last_updated_timestamp > ex_last_updated_timestamp)
+                mp_in
+              else
+                mp_ex
+              //              }
+              //              catch
+              //              {
+              //                println("Exception occured in merging")
+              //                case _: Throwable => null
+              //              }
+            }
+          }
+          s ++ Map(k -> mp_mrg)
+        }
+      }
+    }
+
+  }
+
+
+  def merging_seqmapmaps(seqmaps: Seq[Map[String, Map[String, String]]]): Map[String, Map[String, String]] = {
+    seqmaps match {
+      case null => null
+      case sq if sq.size < 1 => null
+      case sq if sq.size == 1 => sq.head
+      case sq => {
+        sq.foldLeft(Map[String, Map[String, String]]()) { case (s, mp) =>
+          var mut_map = s
+          val tstmp = mp.map { case (key, submap) =>
+            val mp_mrg: Map[String, String] = mut_map.getOrElse(key, null) match {
+              case null => submap
+              case mp => {
+                //                if (mp("last_updated_timestamp".toUpperCase) > submap("last_updated_timestamp".toUpperCase))
+                if (mp("last_updated_timestamp") > submap("last_updated_timestamp"))
+                  mp
+                else
+                  submap
+              }
+            }
+            mut_map ++= Map(key -> mp_mrg)
+          }
+          mut_map
+        }
+      }
+    }
+  }
+
+  /**
+   * Auxiliar Methods to identify if an element is null or empty
+   *
+   * @param input : Option[AnyRef] => element to verify if empty/null or not
+   * @return Boolean => True if we have an empty element, false otherwise
+   */
+  def isEmpty(input: Option[String]): Boolean = input match {
+    case None | null => true
+    case Some(s) if s.size < 1 => true
+    case _ => false
+  }
+
+  def isEmpty[Z: ClassTag](input: Option[Seq[AnyRef]]): Boolean = input match {
+    case None | null => true
+    case Some(s) if s.size < 1 => true
+    case _ => false
+  }
+
+  def isEmpty[Z: ClassTag, Y: ClassTag](input: Option[Map[String, AnyRef]]): Boolean = input match {
+    case None | null => true
+    case Some(s) if s.size < 1 => true
+    case _ => false
+  }
+
+  def isEmpty[Z: ClassTag, Y: ClassTag, X: ClassTag](input: Map[String, AnyRef]): Boolean = input match {
+    case null => true
+    case s if s.size < 1 => true
+    case _ => false
+  }
+
+  def isEmpty[Z: ClassTag, Y: ClassTag, X: ClassTag, W: ClassTag](input: Seq[Map[String, String]]): Boolean = input match {
+    case null => true
+    case s if s.size < 1 => true
+    case _ => false
+  }
+
+  /**
+   * Method to generate a xxx_timestamp
+   *
+   * @return String => It will represent the processing time stamp. It will be used to indicate when this records was last updated and will populate the first_seen/last_seen of the passports received from xxx
+   */
+  def generate_xxx_timestamp(): String = {
+    String.valueOf(TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis()))
+  }
+
+  /**
+   * - Method to Validate string fields from xxx. Logic:
+   * In case the fields arrive empty, we make them null
+   *
+   * @param field : Option[String]] => any String field coming from xxx
+   * @return String => The input field as it is. In case the field was empty null value is returned
+   */
+  /*def validate_string(field: Option[String]) : String = field match {
+    case f if isEmpty(f) => null
+    case Some(f) => f.trim()
+  }*/
+  def validate_string(field: Option[String]): String = {
+    try {
+      field match {
+        case None | Some(null) => null
+        case Some(f) if f.size < 1 => null
+        case Some(f) => f.trim()
+      }
+    }
+    catch {
+      case e: Throwable => {
+        println("Input data is " + field)
+        println(e)
+      }
+        null
+    }
+  }
+
+  def validate_map_maps(field: Option[AnyRef]): Map[String, Map[String, String]] = field match {
+    case None | Some(null) => null
+    case Some(e) => {
+      e match {
+        case s: String@unchecked => null // This is an invalid, potentially empty, string
+        case m: Map[String, Map[String, String]]@unchecked => if (m.size < 1) null else m
+        case _ => null
+      }
+    }
+  }
+
+  /**
+   * - Method to Validate the xxx record, to ensure it contains the mandatory fields
+   *
+   * @param person_id        : Option[String] => This will represent the primary key
+   * @param tibco_time_stamp : Option[String] => This field is required to determine what record contains newer information
+   * @param actionId         : Option[String] => The only 3 types of accepted acctions are: I, U and D. Other values in Action will invalidate the record
+   */
+  def validate_xxx_record(person_id: Option[String], tibco_time_stamp: Option[String], actionId: Option[String]): Boolean = {
+    if (isEmpty(person_id) | isEmpty(tibco_time_stamp) | !Seq("I", "U", "D").contains(actionId))
+      false
+    else
+      true
+  }
+
+  /**
+   * Method to derive address details from kafka message
+   * Logic:
+   * case "cityIATACode" => "city_code" -> value
+   * case "locationID" => "location_id" -> value
+   * case "locationDetails" => "location_details" -> renameLocAttrs(value)
+   *
+   * @param address : Option[Array[Map[String,String]]] => Map of address details coming from xxx as "addressDetails"
+   * @param ts      : String => "createdDateTime" coming from the message. It is used to populate the "last_updated_timestamp" used for merging
+   * @return: Seq[Map[String,String]] =>  Set of attributes required for member profile
+   */
+
+
+  def derive_address(address: Option[Seq[Map[String, String]]], changedDateTime: Option[String], createdDateTime: Option[String]): Map[String, Map[String, String]] = {
+    //    var attrMap = Map("CITY_CODE" -> "cityIATACode", "PREF_ADDRESS_FLAG" -> "preferredIndicator", "LOCATION_ID" -> "locationID", "LOCATION_DETAILS" -> "locationDetails","ADDR_CREATED_DATE" -> "derived")
+    var attrMap = Map("city_code" -> "cityIATACode", "pref_address_flag" -> "preferredIndicator", "location_id" -> "locationID", "location_details" -> "locationDetails", "addr_created_date" -> "derived")
+    var listCompKeys = List("customerID", "addressID")
+    derive_complex_filed(attrMap, listCompKeys, address, changedDateTime, createdDateTime)
+  }
+
+  /**
+   * Method to rename attributes of locationDetails in addressDetails
+   *
+   * @param locDtls : String => "locationDetails" from "addressDetails"
+   * @return => unit
+   * @author => srinivas vardhineni
+   */
+
+  def renameLocAttrs(locDtls: String): String = {
+    //    var attrMap = Map("addressLine1" -> "ADDRESSLINE1", "addressLine2" -> "ADDRESSLINE2", "addressLine3" -> "ADDRESSLINE3", "addressType" -> "ADDRESS_TYPE","postalCode" -> "POSTAL_CODE","poBox" -> "POBOX" , "town" -> "TOWN", "city" -> "CITY", "state" -> "STATE", "country" -> "COUNTRY", "region" -> "REGION")
+    var attrMap = Map("addressLine1" -> "addressline1", "addressLine2" -> "addressline2", "addressLine3" -> "addressline3", "addressType" -> "address_type", "postalCode" -> "postal_code", "poBox" -> "pobox", "town" -> "town", "city" -> "city", "state" -> "state", "country" -> "country", "region" -> "region")
+    var value = locDtls
+    attrMap.keys.foreach(attr => {
+      var mapVal = validate_string(attrMap.get(attr))
+      if (value.contains(attr)) {
+        //        value = value.replace(attr, mapVal.toUpperCase)
+        value = value.replace(attr, mapVal)
+      }
+    }
+    )
+    value
+  }
+
+  /**
+   * Method to derive preference details from kafka message
+   * Logic:
+   * case "preferenceCategoryDescription" => "preference_category_description" -> value
+   * case "categoryDescription" => "category_description" -> value
+   * case "preferenceTypeDescription" => "preference_type_description" -> value
+   * case "usage" => "usage" -> value
+   * case "usageDescription" => "usage_description" -> value
+   *
+   * @param preferences : Option[Array[Map[String,String]]] => Map of preference details coming from xxx as "preferences"
+   * @param ts          : String => "createdDateTime" coming from the message. It is used to populate the "last_updated_timestamp" used for merging
+   * @return: Seq[Map[String,String]] =>  Set of attributes required for member profile
+   */
+
+  def derive_preference(preferences: Option[Seq[Map[String, String]]], changedDateTime: Option[String], createdDateTime: Option[String]): Map[String, Map[String, String]] = {
+    //    var attrMap = Map("PREFERENCE_CATEGORY_DESCRIPTION" -> "preferenceCategoryDescription", "CATEGORY_DESCRIPTION" -> "categoryDescription", "PREFERENCE_TYPE_DESCRIPTION" -> "preferenceTypeDescription", "USAGE" -> "usage","USAGE_DESCRIPTION" -> "usageDescription", "PREFERENCE_DETAIL" -> "preference", "PREFERENCE_CREATED_DATE" -> "derived")
+    var attrMap = Map("preference_category_description" -> "preferenceCategoryDescription", "category_description" -> "categoryDescription", "preference_type_description" -> "preferenceTypeDescription", "usage" -> "usage", "usage_description" -> "usageDescription", "preference_detail" -> "preference", "preference_created_date" -> "derived")
+    var listCompKeys = List("customerID", "preferenceCategoryCode", "preferenceTypeCode")
+    derive_complex_filed(attrMap, listCompKeys, preferences, changedDateTime, createdDateTime)
+
+  }
+
+
+  /**
+   * Method to derive profile contact details from kafka message
+   * Logic:
+   * case "contactType" => "contact_type" -> value
+   * case "isdCode" => "isd_code" -> value
+   * case "contactNumber" => "contact_no" -> value
+   * case "preferredContact" => "pref_contact_flag" -> value
+   * case "areaCode" => "area_code" -> value
+   *
+   * @param contacts : Option[Seq[Map[String,String]]] => Map of profile contact details coming from xxx as "profileContactDetails"
+   * @param ts       : String => "createdDateTime" coming from the message. It is used to populate the "last_updated_timestamp" used for merging
+   * @return: Seq[Map[String,String]] =>  Set of attributes required for member profile
+   */
+
+  def derive_profile_contact_details(contacts: Option[Seq[Map[String, String]]], changedDateTime: Option[String], createdDateTime: Option[String]): Map[String, Map[String, String]] = {
+    //    var attrMap = Map("ISD_CODE" -> "isdCode", "CONTACT_NO" -> "contactNumber", "PREF_CONTACT_FLAG" -> "preferredContact", "AREA_CODE" -> "areaCode", "CONTACT_CREATED_DATE" -> "derived")
+    var attrMap = Map("isd_code" -> "isdCode", "contact_no" -> "contactNumber", "pref_contact_flag" -> "preferredContact", "area_code" -> "areaCode", "contact_created_date" -> "derived")
+    var listCompKeys = List("customerID", "contactType")
+    derive_complex_filed(attrMap, listCompKeys, contacts, changedDateTime, createdDateTime)
+  }
+
+  /**
+   * Method to derive fields from Map
+   *
+   * @param attrMap         : Map[String,String] => Map of attributes to be derived
+   * @param listCompKeys    : List[String] => Attributes for composite primary key
+   * @param cmplxFld        : Option[Seq[Map[String, String]]] => Map of attributes and values from JSON array of message
+   * @param createdDateTime : Option[String] => created date time from the message
+   * @return: Seq[Map[String,String]] =>  Set of attributes required for member profile
+   */
+  def derive_complex_filed(attrMap: Map[String, String], listCompKeys: List[String], cmplxFld: Option[Seq[Map[String, String]]], changedDateTime: Option[String], createdDateTime: Option[String]): Map[String, Map[String, String]] = {
+    try {
+      cmplxFld match {
+        case conts if isEmpty(conts) => null
+        case Some(conts) => {
+
+          val last_updated_timestamp: String = changedDateTime match {
+            case null | None | Some("") => "1985-01-01 01:01:01.001"
+            case Some(t) => t.trim()
+          }
+
+          val created_timestamp: String = createdDateTime match {
+            case null | None | Some("") => "1985-01-01 00:00:00.000"
+            case Some(t) => t.trim()
+          }
+
+          conts.foldLeft(Map[String, Map[String, String]]()) { case (s, p) => {
+
+            var compKey: String = ""
+            breakable {
+              for (ele <- listCompKeys) {
+                var attrVal = p.getOrElse(ele, "")
+                if (attrVal != "" && attrVal != null) {
+                  compKey += attrVal + "."
+                }
+                else {
+                  compKey = null
+                  break()
+                }
+              }
+            }
+
+            if (compKey != null) {
+              compKey = compKey.substring(0, compKey.size - 1)
+            }
+
+            //            val cont_pk: String = p.getOrElse("customerID", "")
+            //            println("contact primary key: " + cont_pk)
+
+
+            var updated_conts: Map[String, String] = Map(
+              //              "last_updated_timestamp".toUpperCase -> last_updated_timestamp
+              "last_updated_timestamp" -> last_updated_timestamp
+            )
+            attrMap.keys.foreach(attr => {
+              var msgAttr = validate_string(attrMap.get(attr))
+              var msgAttrVal = p.getOrElse(msgAttr, "").trim
+
+              if (msgAttrVal.equals("") || msgAttrVal == null) {
+                msgAttrVal = null
+              }
+
+              //handle attributes for address_details
+              if (msgAttr.equals("locationDetails")) {
+                msgAttrVal = renameLocAttrs(msgAttrVal)
+              }
+
+              if (attr.equalsIgnoreCase("ADDR_CREATED_DATE")) {
+                msgAttrVal = created_timestamp
+              }
+
+              if (attr.equalsIgnoreCase("PREFERENCE_CREATED_DATE")) {
+                msgAttrVal = created_timestamp
+              }
+
+              if (attr.equalsIgnoreCase("CONTACT_CREATED_DATE")) {
+                msgAttrVal = created_timestamp
+              }
+
+              if (attr.equalsIgnoreCase("SIGN_DATE")) {
+                if(msgAttrVal!=null)
+                {
+                  msgAttrVal = changeSignedDateFormat(msgAttrVal)
+                }
+
+              }
+
+              //              updated_conts += attr.toUpperCase -> msgAttrVal
+              updated_conts += attr -> msgAttrVal
+
+            }
+
+            )
+
+            if (compKey != null) {
+              s ++ Map(compKey -> updated_conts).filter(_ != null)
+            }
+            else {
+              s
+            }
+
+
+          }
+          }
+        }
+
+
+      }
+
+    } catch {
+      case e: Exception => println("Exception in deriving complex field: " + e);
+        null
+    }
+  }
+
+  def changeSignedDateFormat(inputDate: String): String =
+  {
+    val inputFormat = new SimpleDateFormat("ddMMMyyyy")
+    val outputFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+    val cal = Calendar.getInstance()
+    cal.setTime(inputFormat.parse(inputDate))
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    val formattedDate = outputFormat.format(cal.getTime())
+    formattedDate
+  }
+
+  def derive_minor_details(minorDetails: Option[Seq[Map[String, String]]], changedDateTime: Option[String], createdDateTime: Option[String]): Map[String, Map[String, String]] = {
+    var attrMap = Map("active_status" -> "activeStatus", "minor_skywards_number" -> "minorCardNumber", "relationship_to_parent" -> "relation", "send_care_of_flag" -> "sendCareOf", "sign_date" -> "signedDate", "parent_skywards_number" -> "parentCardNumber", "primary_flag" -> "isPrimary","minor_customer_number" -> "minorCustomerID")
+    var listCompKeys = List("customerID", "parentCardNumber", "minorCardNumber")
+    derive_complex_filed(attrMap, listCompKeys, minorDetails, changedDateTime, createdDateTime)
+  }
+
+  def derive_guardian_details(guardianDetails: Option[Seq[Map[String, String]]], changedDateTime: Option[String], createdDateTime: Option[String]): Map[String, Map[String, String]] = {
+    var attrMap = Map("active_status" -> "activeStatus", "parent_skywards_number" -> "parentCardNumber", "parent_customer_number" -> "parentxxxID", "initiator" -> "initiator", "relationship_to_parent" -> "relationship", "send_care_of_flag" -> "sendCareOf", "sign_date" -> "signedDate", "minor_skywards_number" -> "minorCardNumber", "primary_flag" -> "isPrimary")
+    var listCompKeys = List("customerID", "parentxxxID", "parentCardNumber", "minorCardNumber")
+    derive_complex_filed(attrMap, listCompKeys, guardianDetails, changedDateTime, createdDateTime)
+  }
+
+  def derive_linked_member_details(linkedMemberDetails: Option[Seq[Map[String, String]]], changedDateTime: Option[String], createdDateTime: Option[String]): Map[String, Map[String, String]] = {
+    var attrMap = Map("auto_renew_flag" -> "autoReview", "expired_date" -> "expiredDate", "link_id" -> "linkID", "linked_date" -> "linkedRate", "nominee_type" -> "nomineeType", "primary_customer_number" -> "customerID", "linked_skywards_number" -> "membershipNumber", "relationship" -> "relationship", "linked_customer_number" -> "linkedLMACustomerID")
+    var listCompKeys = List("customerID", "linkID", "membershipNumber")
+    derive_complex_filed(attrMap, listCompKeys, linkedMemberDetails, changedDateTime, createdDateTime)
+
+  }
+
+  def derive_xxx_source_records(xxxUuid: String, xxxTimeStamp: String, source: String): Seq[Map[String, String]] = {
+    val xxx_uuid: String = xxxUuid match {
+      case null => null
+      case p if isEmpty(Some(p)) => null
+      case p => p.trim
+    }
+    val xxx_time_stamp: String = xxxTimeStamp match {
+      case null => null
+      case p if isEmpty(Some(p)) => null
+      case p => p.trim
+    }
+    val src: String = source match {
+      case null => null
+      case p if isEmpty(Some(p)) => null
+      case p => p.trim
+    }
+
+    Seq(Map(
+      "xxx_uuid" -> xxx_uuid,
+      "xxx_timestamp" -> xxx_time_stamp,
+      "first_xxx_uuid" -> xxx_uuid,
+      "first_xxx_timestamp" -> xxx_time_stamp,
+      "source" -> src))
+  }
+
+  def derive_source_info(xxx_timestamp: String, xxx_uuid: String): Map[String, String] = {
+    Map(
+      "Source" -> "xxx",
+      "xxx_timestamp" -> xxx_timestamp,
+      "xxx_uuid" -> xxx_uuid
+    )
+  }
+
+  def selecting_emcg_uuid(xxx_source_records: Seq[Map[String, String]]): String = {
+    xxx_source_records match {
+      case null => null
+      case hsr if hsr.size == 0 => null
+      case hsr if hsr.size == 1 => hsr.head.getOrElse("first_xxx_uuid", null)
+      case hsr if hsr.size > 1 => hsr.sortBy(_ ("first_xxx_timestamp")).head.getOrElse("first_xxx_uuid", null)
+    }
+  }
+
+  def selecting_emcg_uuid_udf = udf(selecting_emcg_uuid _)
+
+  def derive_action_id(action_id: String): String = {
+    action_id match {
+      case a if Seq("I", "U").contains(a) => "IU"
+      case a if a == "D" => a
+      case _ => "X"
+    }
+  }
+
+  /**
+   * - Method to Update a String column only if the incremental value is not null. In case it is null, then we keep the exisitng value in Delta Lake
+   *
+   * @param incremental : Option[String] => New value for the corresponding column, comming from Structured Streaming
+   * @param existing    : Option[String] => Existing value for the corresponding column, comming from Delta Lake
+   * @return String => Cobination of both, incremental and delta lake records after removing duplicates */
+
+  def update_string(incremental: String, existing: String): String = {
+    try {
+      (incremental, existing) match {
+        case (null, null) => null
+        case (null, e) => e
+        case (i, _) => i
+      }
+    } catch {
+      case e: Exception => println("Exception in update_string: " + e);
+        null
+    }
+  }
+
+  def update_string(incremental: Option[String], existing: Option[String]): String = {
+
+ // print("In update_string udf")
+    try {
+      (incremental, existing) match {
+        case (None | null, None | null) => null
+        case (None | null, Some(e)) => e
+        case (Some(i), _) => i
+      }
+    } catch {
+      case e: Exception => println("Exception in update_string: " + e);
+        null
+    }
+  }
+
+
+/*    def update_Created(incremental: Option[String], existing: Option[String]): String {
+    try {
+        (incremental,existing) match {
+         case (Some(i), _) => i
+         case (None|null, None,null) => null
+         case (None|null, Some(e)) => e
+    }
+    } catch {
+      case e: Exception => println("Exception in update_string: " + e);
+        null
+    }
+  }*/
+
+  /*def update_xxx_source_records(newSourceRec: Seq[Map[String, String]], existingSourceRec: Seq[Map[String, String]]) = {
+
+    val source = "xxx"
+    if (existingSourceRec == null)
+      if (newSourceRec == null || newSourceRec.size == 0) Nil else newSourceRec
+    else {
+      val (src, oth) = existingSourceRec.partition(_.get("source").getOrElse("") == source)
+      if (src.size > 0) {
+        val (hid, hts) = newSourceRec.collectFirst { case m => (m.get("xxx_uuid").getOrElse(""), m.get("xxx_timestamp").getOrElse("")) }.get
+        src.map(sr => {
+          sr.map(k => (k._1, k._2) match {
+            case ("xxx_uuid", _) => k._1 -> hid
+            case ("xxx_timestamp", _) => k._1 -> hts
+            case _ => k
+          })
+        }) ++ oth
+      }
+      else
+        newSourceRec ++ oth
+    }
+  }*/
+
+  def update_xxx_source_records(newSourceRec: Seq[Map[String, String]], existingSourceRec: Seq[Map[String, String]]) = {
+    val newSourceRecHead = newSourceRec.head
+    val existingSourceRecHead = existingSourceRec.head
+
+    val xxxUUID: String = newSourceRecHead.getOrElse("xxx_uuid", null)
+    val xxxTimeStamp: String = newSourceRecHead.getOrElse("xxx_timestamp", null)
+    val firstxxxUUID: String = existingSourceRecHead.getOrElse("first_xxx_uuid", null)
+    val firstxxxTimeStamp: String = existingSourceRecHead.getOrElse("first_xxx_timestamp", null)
+    val src: String = existingSourceRecHead.getOrElse("source", null)
+
+    val xxx_uuid = xxxUUID match {
+      case null => existingSourceRecHead.getOrElse("xxx_uuid", null)
+      case p if p.trim.size < 1 => existingSourceRecHead.getOrElse("xxx_uuid", null)
+      case p if p.trim.size >= 1 => p.trim
+    }
+
+    val xxx_timestamp = xxxTimeStamp match {
+      case null => existingSourceRecHead.getOrElse("xxx_timestamp", null)
+      case p if p.trim.size < 1 => existingSourceRecHead.getOrElse("xxx_timestamp", null)
+      case p if p.trim.size >= 1 => p.trim
+    }
+
+    val first_xxx_uuid = firstxxxUUID match {
+      case null => xxx_uuid
+      case p if p.trim.size < 1 => xxx_uuid
+      case p if p.trim.size >= 1 => p.trim
+    }
+
+    val first_xxx_timestamp = firstxxxTimeStamp match {
+      case null => xxx_timestamp
+      case p if p.trim.size < 1 => xxx_timestamp
+      case p if p.trim.size >= 1 => p.trim
+    }
+
+    Seq(Map(
+      "xxx_uuid" -> xxx_uuid,
+      "xxx_timestamp" -> xxx_timestamp,
+      "first_xxx_uuid" -> first_xxx_uuid,
+      "first_xxx_timestamp" -> first_xxx_timestamp,
+      "source" -> src))
+
+  }
+
+  def update_source_info(incremental: Option[Seq[Map[String, String]]], existing: Option[Seq[Map[String, String]]]): Seq[Map[String, String]] = {
+    println("Start")
+    try {
+      (incremental, existing) match {
+        case (i, e) if isEmpty(e) => i.getOrElse(null) // Revise this later n the unit test cases
+        case (i, e) if isEmpty(i) & isEmpty(e) => null
+        case (i, e) if isEmpty(i) => e.getOrElse(null)
+        case (Some(i), Some(e)) => {
+          i ++ e
+        }
+      }
+    } catch {
+      case e: Exception => println("Exception in update_source_info: " + e);
+        null
+    }
+  }
+
+
+  /**
+   * Method to concatenate elements to a Seq[Map[String, String]] from another Seq[Map[String, String]]
+   */
+  def concatenate_elements_to_seq_map(incremental: Option[Seq[Map[String, String]]], existing: Option[Seq[Map[String, String]]]): Seq[Map[String, String]] = {
+    try {
+      (incremental, existing) match {
+        case (i, e) if isEmpty(e) => i.getOrElse(null) // Revise this later n the unit test cases
+        case (i, e) if isEmpty(i) & isEmpty(e) => null
+        case (i, e) if isEmpty(i) => e.getOrElse(null)
+        case (Some(i), Some(e)) => {
+          val new_pk: Seq[String] = i.map { v => v.getOrElse("pk", "") }.filter(_.nonEmpty).toSeq
+          val existing_elements_not_updated: Seq[Map[String, String]] = e.filterNot(x => new_pk.contains(x.getOrElse("pk", "")))
+          i ++ existing_elements_not_updated
+        }
+      }
+    } catch {
+      case e: Exception => println("Exception in concatenate_elements_to_seq_map: " + e);
+        null
+    }
+  }
+
+  def concatenate_elements_to_seq_map(incremental: Seq[Map[String, String]], existing: Seq[Map[String, String]]): Seq[Map[String, String]] = {
+    try {
+      (incremental, existing) match {
+        case (i, e) if isEmpty(i) & isEmpty(e) => null
+        case (i, e) if isEmpty(i) => e
+        case (i, e) if isEmpty(e) => i
+        case (i, e) => {
+          val new_pk: Seq[String] = i.map { v => v.getOrElse("pk", "") }.filter(_.nonEmpty).toSeq
+          val existing_elements_not_updated: Seq[Map[String, String]] = e.filterNot(x => new_pk.contains(x.getOrElse("pk", "")))
+          i ++ existing_elements_not_updated
+        }
+      }
+    } catch {
+      case e: Exception => println("Exception in concatenate_elements_to_seq_map: " + e);
+        null
+    }
+  }
+
+  //TODO - this needs to be revised as per the new xxx source record logic
+  def concatenate_xxx_source_records(incremental: Map[String, String], existing: Seq[Map[String, String]]): Seq[Map[String, String]] = {
+    try {
+      (incremental, existing) match {
+        case (i, e) if isEmpty(i) & isEmpty(e) => null
+        case (i, e) if isEmpty(i) => e
+        case (i, e) if isEmpty(e) => Seq(i)
+        case (i, e) => e :+ i
+      }
+    } catch {
+      case e: Exception => println("Exception in concatenate_elements_to_seq_map: " + e);
+        null
+    }
+  }
+
+  /**
+   * Method to delete elements from a Seq[Map[String, String]]
+   */
+  def delete_elements_from_seq_map(incremental: Option[Seq[Map[String, String]]], existing: Option[Seq[Map[String, String]]]): Seq[Map[String, String]] = {
+    try {
+      (incremental, existing) match {
+        case (i, e) if isEmpty(e) => null
+        case (i, e) if isEmpty(i) & isEmpty(e) => null
+        case (i, e) if isEmpty(i) => e.getOrElse(null)
+        case (Some(i), Some(e)) => {
+          val pk_to_remove: Seq[String] = i.map { v => v.getOrElse("pk", "") }.filter(_.nonEmpty).toSeq
+          e.filterNot(x => pk_to_remove.contains(x.getOrElse("pk", "")))
+        }
+      }
+    } catch {
+      case e: Exception => println("Exception in delete_elements_from_seq_map: " + e);
+        null
+    }
+  }
+
+  def adding_ts_to_maps(input_lst: Seq[Map[String, String]], ts: String): Seq[Map[String, String]] = {
+    input_lst match {
+      case null => null
+      case _ => input_lst.map { mp => mp + ("last_updated_timestamp" -> ts) }.toSeq
+    }
+  }
+
+
+  // Covert xxx timestamp format from ddMMMyyyy HH:mm:ss.SSS to yyyy-MM-dd HH:mm:ss.SSS
+  def parse_tselement(element: String): Option[String] = {
+    val parser = DateTimeFormatter.ofPattern("ddMMMyyyy HH:mm:ss.SSS")
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+//    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    Try {
+      LocalDateTime.parse(element, parser)
+    }.toOption.map(_.format(formatter))
+  }
+
+
+  def merging_seqseqmaps = (input_lst: Seq[Seq[Map[String, String]]]) => {
+    input_lst match {
+      case null => null
+      case lst if lst.size == 0 => null
+      case lst if lst.size == 1 => lst(0) // I believe it is the correct one since it is a seq(seq())
+      case lst: Seq[Seq[Map[String, String]]] => {
+        val seed: Seq[Map[String, String]] = Seq()
+        //val flat_lst = lst.foldLeft(seed)(_ ++ _)
+        //flat_lst.groupBy(p => p("pk")).map{case(k,v) => v.sortBy(_("last_updated_timestamp"))(Ordering[String].reverse).head }.toSeq
+        //Modified as below for complex element MT
+        val flat_lst = lst.foldLeft(seed)(_ ++ _).map { mp => if (mp.contains("last_updated_timestamp")) mp else mp ++ Map("last_updated_timestamp" -> "1985-01-01 01:01:01.001") }
+        flat_lst.groupBy(p => p("pk")).map { case (k, v) => v.sortBy(_ ("last_updated_timestamp"))(Ordering[String].reverse).head }.toSeq
+      }
+    }
+  }
+
+  def merging_seqmaps(input_lst: Seq[Seq[Map[String, String]]]): Seq[Map[String, String]] = {
+
+    input_lst match {
+      case null => null
+      case lst if lst.size == 0 => null
+      case lst if lst.size == 1 => lst(0)
+      case lst: Seq[Seq[Map[String, String]]] => {
+
+        val sq_flt = lst.flatten.distinct
+        val first_hlx = sq_flt.head
+        val last_hlx = sq_flt.last
+
+
+       /* Seq(Map("xxx_uuid" -> last_hlx.getOrElse("xxx_uuid", null),
+          "xxx_timestamp" -> last_hlx.getOrElse("xxx_timestamp", null),
+          "first_xxx_timestamp" -> first_hlx.getOrElse("first_xxx_timestamp", null),
+          "first_xxx_uuid" -> first_hlx.getOrElse("first_xxx_uuid", null),
+          "source" -> "xxx"))*/
+
+        Seq(Map("xxx_uuid" -> first_hlx.getOrElse("xxx_uuid", null),
+          "xxx_timestamp" -> first_hlx.getOrElse("xxx_timestamp", null),
+          "first_xxx_timestamp" -> first_hlx.getOrElse("first_xxx_timestamp", null),
+          "first_xxx_uuid" -> first_hlx.getOrElse("first_xxx_uuid", null),
+          "source" -> "xxx"))
+      }
+    }
+  }
+
+
+}
