@@ -1,0 +1,35 @@
+package com.xxx.xxx.utils
+
+import com.typesafe.config.{Config, ConfigFactory}
+import com.xxx.xxx.driver.MemberProfileKafkaToLMODriver.configFile
+import net.ceedubs.ficus.Ficus._
+
+/**
+  * Configurations for STREAMING_xxx_xxx_xxx_LMO Streaming Job
+  *
+  * @param
+  */
+object EnviromentConfig  {
+  lazy val config = ConfigFactory.load(configFile)
+  lazy val envConfig = config.as[Option[Config]]("DataExport").getOrElse(ConfigFactory.empty())
+  private lazy val spark = config.getConfig("spark")
+  lazy val params = spark.as[Option[Map[String, String]]]("sparkConf")
+
+
+  object EnvironmentMetadata
+  {
+    val xxx_min_schema_path: String = envConfig.as[Option[String]]("xxx_min_schema_path").getOrElse("")
+    val kafka_bootstrap_config: String = envConfig.as[Option[String]]("kafka_bootstrap_config").getOrElse("")
+    val kafka_xxx_topic: String = envConfig.as[Option[String]]("kafka_xxx_topic").getOrElse("")
+    val chkPntDir: String = envConfig.as[Option[String]]("chkPntDir").getOrElse("")
+    val kafka_starting_offsets: String = envConfig.as[Option[String]]("kafka_starting_offsets").getOrElse("")
+    val kafka_maxOffsets_PerTrigger: String = envConfig.as[Option[String]]("kafka_maxOffsets_PerTrigger").getOrElse("")
+    val max_retries: String = envConfig.as[Option[String]]("max_retries").getOrElse("")
+    val retry_delay_in_secs: String = envConfig.as[Option[String]]("retry_delay_in_secs").getOrElse("")
+    val batch_to_vacuum: String = envConfig.as[Option[String]]("batch_to_vacuum").getOrElse("")
+    val vacuum_retention_period: String = envConfig.as[Option[String]]("vacuum_retention_period").getOrElse("")
+    val data_flow: String = envConfig.as[Option[String]]("data_flow").getOrElse("")
+
+
+  }
+}
